@@ -12,6 +12,7 @@ function App() {
   const [error, setError] = useState('')
 
   const latest = useMemo(() => (samples.length ? samples[samples.length - 1] : null), [samples])
+  const exportUrl = `${API_BASE}/reports/export/${encodeURIComponent(activeTarget)}`
 
   const addTarget = async () => {
     setError('')
@@ -89,7 +90,7 @@ function App() {
             <button className="rounded bg-rose-600 px-4 py-2 text-sm" onClick={stop}>Stop Monitoring</button>
             <button className="rounded bg-slate-700 px-4 py-2 text-sm" onClick={fetchLive}>Live Network Metrics</button>
             <button className="rounded bg-slate-700 px-4 py-2 text-sm" onClick={fetchEvents}>Kafka Stream Events</button>
-            <a className="rounded bg-violet-700 px-4 py-2 text-sm" href={`${API_BASE}/reports/export/${activeTarget}`}>Export Reports</a>
+            <a className="rounded bg-violet-700 px-4 py-2 text-sm" href={exportUrl}>Export Reports</a>
           </div>
           <p className="text-xs text-slate-400">Target Status: {status} {error ? `| Error: ${error}` : ''}</p>
         </div>
