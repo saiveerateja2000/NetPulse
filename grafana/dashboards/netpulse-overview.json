@@ -1,0 +1,25 @@
+{
+  "id": null,
+  "uid": "netpulse-overview",
+  "title": "NetPulse Overview",
+  "tags": ["netpulse"],
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": {"from": "now-15m", "to": "now"},
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Latency by Target",
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 0},
+      "datasource": "NetPulse Postgres",
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT ts AS \"time\", latency_ms, target FROM telemetry_metrics WHERE $__timeFilter(ts) ORDER BY ts",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

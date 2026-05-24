@@ -1,0 +1,8 @@
+fastapi==0.115.6
+uvicorn==0.32.1
+pydantic==2.10.3
+psutil==6.1.0
+ping3==4.0.8
+scapy==2.6.1
+kafka-python==2.0.2
+dnspython==2.7.0
