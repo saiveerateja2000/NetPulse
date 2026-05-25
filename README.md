@@ -27,7 +27,6 @@ NetPulse is a lightweight, open-source real-time network telemetry and analytics
 ## Run Locally
 
 ```bash
-cp .env .env
 make up
 ```
 
