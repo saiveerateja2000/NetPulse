@@ -7,6 +7,8 @@ from typing import List
 
 import httpx
 import psycopg2
+from psycopg2.pool import SimpleConnectionPool
+import logging
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -15,6 +17,8 @@ from pydantic import BaseModel, Field, field_validator
 COLLECTOR_BASE_URL = os.getenv("COLLECTOR_BASE_URL", "http://localhost:8001")
 
 app = FastAPI(title="NetPulse API Service")
+logging.basicConfig(level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO))
+logger = logging.getLogger("api")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -25,13 +29,43 @@ app.add_middleware(
 
 
 def get_db_connection():
-    return psycopg2.connect(
-        dbname=os.getenv("POSTGRES_DB", "netpulse"),
-        user=os.getenv("POSTGRES_USER", "netpulse"),
-        password=os.getenv("POSTGRES_PASSWORD", "netpulse"),
-        host=os.getenv("POSTGRES_HOST", "localhost"),
-        port=int(os.getenv("POSTGRES_PORT", "5432")),
-    )
+    """Return a context manager that yields a connection from a pool.
+
+    The pool is created lazily on first use to avoid failing at import time.
+    """
+    global _DB_POOL
+    if "_DB_POOL" not in globals() or _DB_POOL is None:
+        try:
+            _DB_POOL = SimpleConnectionPool(
+                1,
+                5,
+                dbname=os.getenv("POSTGRES_DB", "netpulse"),
+                user=os.getenv("POSTGRES_USER", "netpulse"),
+                password=os.getenv("POSTGRES_PASSWORD", "netpulse"),
+                host=os.getenv("POSTGRES_HOST", "localhost"),
+                port=int(os.getenv("POSTGRES_PORT", "5432")),
+            )
+        except Exception as exc:
+            logger.exception("Failed to create DB connection pool: %s", exc)
+            raise
+
+    class _DBConnCtx:
+        def __init__(self, pool: SimpleConnectionPool):
+            self.pool = pool
+            self.conn = None
+
+        def __enter__(self):
+            self.conn = self.pool.getconn()
+            return self.conn
+
+        def __exit__(self, exc_type, exc, tb):
+            try:
+                if self.conn is not None:
+                    self.pool.putconn(self.conn)
+            except Exception:
+                pass
+
+    return _DBConnCtx(_DB_POOL)
 
 
 class TargetRequest(BaseModel):

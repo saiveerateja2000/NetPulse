@@ -25,12 +25,11 @@ NetPulse is a lightweight, open-source real-time network telemetry and analytics
 - `docs/`
 
 ## Run Locally
+## Run Locally
 
-```bash
-make up
-```
+See [guide.md](guide.md) for step-by-step instructions to build, run and test the stack with Docker Compose.
 
-Docker Compose is self-contained; required service environment values are defined directly under each service in `docker-compose.yml`.
+Docker Compose is self-contained; service environment values are defined in `docker-compose.yml`.
 
 Endpoints:
 

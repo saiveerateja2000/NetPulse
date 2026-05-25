@@ -10,6 +10,7 @@ from typing import Dict, List, Optional
 
 import dns.resolver
 import psutil
+import logging
 from fastapi import FastAPI, HTTPException
 from kafka import KafkaProducer
 from pydantic import BaseModel, field_validator
@@ -18,6 +19,10 @@ from ping3 import ping
 app = FastAPI(title="NetPulse Collector Service")
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092")
 KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "netpulse.telemetry")
+
+# logging
+logging.basicConfig(level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO))
+logger = logging.getLogger("collector")
 
 
 class TargetRequest(BaseModel):
@@ -64,7 +69,8 @@ class Collector:
                     max_block_ms=5000,
                     request_timeout_ms=5000,
                 )
-            except Exception:
+            except Exception as e:
+                logger.exception("Failed to create Kafka producer, retrying")
                 time.sleep(2)
         return None
 
@@ -75,6 +81,8 @@ class Collector:
                 return
             self.sessions[target] = SessionState(target=target, running=True, samples=[])
 
+        logger.info("Starting collector for target %s", target)
+
         thread = threading.Thread(target=self._monitor_loop, args=(target,), daemon=True)
         self.threads[target] = thread
         thread.start()
@@ -84,6 +92,7 @@ class Collector:
             session = self.sessions.get(target)
             if session:
                 session.running = False
+        logger.info("Stopping collector for target %s", target)
 
     def latest(self, target: str) -> Dict:
         session = self.sessions.get(target)
@@ -123,8 +132,8 @@ class Collector:
             if producer:
                 try:
                     producer.send(KAFKA_TOPIC, metric)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("Failed to send metric to Kafka: %s", e)
             time.sleep(2)
 
         if producer:
@@ -132,12 +141,13 @@ class Collector:
                 producer.flush(timeout=2)
                 producer.close()
             except Exception:
-                pass
+                logger.exception("Error flushing/closing Kafka producer")
 
     def _collect_metrics(self, target: str, latency_history: List[float]) -> Dict:
         try:
             ping_value = ping(target, timeout=1)
-        except Exception:
+        except Exception as e:
+            logger.debug("Ping failed for %s: %s", target, e)
             ping_value = None
         latency_ms = round((ping_value or 0) * 1000, 2)
         packet_loss = 0.0 if ping_value is not None else 100.0
@@ -146,7 +156,8 @@ class Collector:
         try:
             dns.resolver.resolve(target, "A")
             dns_lookup_time = round((time.perf_counter() - start_dns) * 1000, 2)
-        except Exception:
+        except Exception as e:
+            logger.debug("DNS lookup failed for %s: %s", target, e)
             dns_lookup_time = 0.0
 
         latency_history.append(latency_ms)
@@ -194,6 +205,7 @@ class Collector:
             destination = socket.gethostbyname(target)
             return f"{destination} (single-hop estimate)"
         except Exception:
+            logger.debug("Traceroute failed for %s", target)
             return "unavailable"
 
 
