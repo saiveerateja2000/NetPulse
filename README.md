@@ -30,6 +30,8 @@ NetPulse is a lightweight, open-source real-time network telemetry and analytics
 make up
 ```
 
+Docker Compose is self-contained; required service environment values are defined directly under each service in `docker-compose.yml`.
+
 Endpoints:
 
 - Frontend: `http://localhost:3000`

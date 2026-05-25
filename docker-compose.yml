@@ -44,6 +44,9 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_TOPIC: netpulse.telemetry
     command: ["bash", "-c", "bash /kafka/topics-init.sh"]
     volumes:
       - ./kafka:/kafka

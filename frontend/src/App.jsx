@@ -2,7 +2,9 @@ import { useMemo, useState } from 'react'
 import axios from 'axios'
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from 'recharts'
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+const API_BASE =
+  import.meta.env.VITE_API_BASE_URL ||
+  `${window.location.protocol}//${window.location.hostname}:8000`
 
 function App() {
   const [target, setTarget] = useState('8.8.8.8')
