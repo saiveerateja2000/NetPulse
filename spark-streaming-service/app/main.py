@@ -4,6 +4,21 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, from_json, to_timestamp
 from pyspark.sql.types import DoubleType, IntegerType, StringType, StructField, StructType
 
+SPARK_EXTRA_JARS = os.getenv(
+    "SPARK_EXTRA_JARS",
+    ",".join(
+        [
+            "/opt/spark-jars/spark-sql-kafka-0-10_2.12-3.5.3.jar",
+            "/opt/spark-jars/spark-token-provider-kafka-0-10_2.12-3.5.3.jar",
+            "/opt/spark-jars/kafka-clients-3.4.1.jar",
+            "/opt/spark-jars/commons-pool2-2.11.1.jar",
+            "/opt/spark-jars/jsr305-3.0.0.jar",
+            "/opt/spark-jars/spark-tags_2.12-3.5.3.jar",
+            "/opt/spark-jars/postgresql-42.7.4.jar",
+        ]
+    ),
+)
+
 
 def write_to_postgres(batch_df, batch_id):
     if batch_df.isEmpty():
@@ -46,10 +61,7 @@ def main():
         SparkSession.builder.appName("NetPulseStreaming")
         .master("local[1]")
         .config("spark.sql.shuffle.partitions", "1")
-        .config(
-            "spark.jars.packages",
-            "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3,org.postgresql:postgresql:42.7.4",
-        )
+        .config("spark.jars", SPARK_EXTRA_JARS)
         .getOrCreate()
     )
     spark.sparkContext.setLogLevel("WARN")
