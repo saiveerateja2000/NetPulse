@@ -52,17 +52,17 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: netpulse
+      POSTGRES_USER: netpulse
+      POSTGRES_PASSWORD: netpulse
     ports:
-      - "${POSTGRES_PORT}:5432"
+      - "5432:5432"
     volumes:
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     mem_limit: 384m
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U netpulse -d netpulse"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -71,10 +71,10 @@ services:
   collector-service:
     build: ./collector-service
     environment:
-      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
-      KAFKA_TOPIC: ${KAFKA_TOPIC}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_TOPIC: netpulse.telemetry
     ports:
-      - "${COLLECTOR_PORT}:8001"
+      - "8001:8001"
     depends_on:
       kafka:
         condition: service_healthy
@@ -93,14 +93,14 @@ services:
     build: ./api-service
     environment:
       COLLECTOR_BASE_URL: http://collector-service:8001
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: netpulse
+      POSTGRES_USER: netpulse
+      POSTGRES_PASSWORD: netpulse
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
-      KAFKA_TOPIC: ${KAFKA_TOPIC}
+      KAFKA_TOPIC: netpulse.telemetry
     ports:
-      - "${API_PORT}:8000"
+      - "8000:8000"
     depends_on:
       collector-service:
         condition: service_healthy
@@ -118,11 +118,11 @@ services:
   spark-streaming-service:
     build: ./spark-streaming-service
     environment:
-      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
-      KAFKA_TOPIC: ${KAFKA_TOPIC}
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_TOPIC: netpulse.telemetry
+      POSTGRES_DB: netpulse
+      POSTGRES_USER: netpulse
+      POSTGRES_PASSWORD: netpulse
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
     depends_on:
@@ -136,7 +136,7 @@ services:
   grafana:
     image: grafana/grafana-oss:11.0.0
     ports:
-      - "${GRAFANA_PORT}:3000"
+      - "3001:3000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -152,9 +152,9 @@ services:
   frontend:
     build: ./frontend
     environment:
-      VITE_API_BASE_URL: http://localhost:${API_PORT}
+      VITE_API_BASE_URL: http://localhost:8000
     ports:
-      - "${FRONTEND_PORT}:3000"
+      - "3000:3000"
     depends_on:
       api-service:
         condition: service_healthy

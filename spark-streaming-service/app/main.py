@@ -68,7 +68,7 @@ def main():
 
     raw_stream = (
         spark.readStream.format("kafka")
-        .option("kafka.bootstrap.servers", os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092"))
+        .option("kafka.bootstrap.servers", os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092"))
         .option("subscribe", os.getenv("KAFKA_TOPIC", "netpulse.telemetry"))
         .option("startingOffsets", "latest")
         .load()

@@ -16,7 +16,7 @@ from pydantic import BaseModel, field_validator
 from ping3 import ping
 
 app = FastAPI(title="NetPulse Collector Service")
-KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
+KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092")
 KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "netpulse.telemetry")
 
 
