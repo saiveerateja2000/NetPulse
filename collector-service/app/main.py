@@ -55,13 +55,18 @@ class Collector:
         self.bytes_recv_last = psutil.net_io_counters().bytes_recv
 
     def _producer(self) -> Optional[KafkaProducer]:
-        try:
-            return KafkaProducer(
-                bootstrap_servers=[KAFKA_BOOTSTRAP_SERVERS],
-                value_serializer=lambda v: json.dumps(v).encode("utf-8"),
-            )
-        except Exception:
-            return None
+        for _ in range(5):
+            try:
+                return KafkaProducer(
+                    bootstrap_servers=[KAFKA_BOOTSTRAP_SERVERS],
+                    value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+                    api_version=(0, 10, 2),
+                    max_block_ms=5000,
+                    request_timeout_ms=5000,
+                )
+            except Exception:
+                time.sleep(2)
+        return None
 
     def start(self, target: str) -> None:
         with self.lock:
@@ -130,7 +135,10 @@ class Collector:
                 pass
 
     def _collect_metrics(self, target: str, latency_history: List[float]) -> Dict:
-        ping_value = ping(target, timeout=1)
+        try:
+            ping_value = ping(target, timeout=1)
+        except Exception:
+            ping_value = None
         latency_ms = round((ping_value or 0) * 1000, 2)
         packet_loss = 0.0 if ping_value is not None else 100.0
 
@@ -159,6 +167,11 @@ class Collector:
 
         traceroute_hops = self._safe_traceroute(target)
 
+        try:
+            active_connections = len(psutil.net_connections(kind="inet"))
+        except (psutil.AccessDenied, OSError, RuntimeError):
+            active_connections = 0
+
         metric = {
             "target": target,
             "latency_ms": latency_ms,
@@ -168,7 +181,7 @@ class Collector:
             "cpu_usage": cpu_usage,
             "memory_usage": memory_usage,
             "bandwidth_usage": round(bandwidth_usage, 2),
-            "active_connections": len(psutil.net_connections(kind="inet")),
+            "active_connections": active_connections,
             "traceroute_hops": traceroute_hops,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
