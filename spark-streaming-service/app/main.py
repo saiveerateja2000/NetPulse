@@ -1,13 +1,16 @@
 import os
 
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, from_json
+from pyspark.sql.functions import col, from_json, to_timestamp
 from pyspark.sql.types import DoubleType, IntegerType, StringType, StructField, StructType
 
 
 def write_to_postgres(batch_df, batch_id):
     if batch_df.isEmpty():
         return
+
+    # Rename 'timestamp' column to 'ts' and cast to TIMESTAMPTZ to match the postgres schema
+    batch_df = batch_df.withColumn("ts", to_timestamp(col("timestamp"))).drop("timestamp")
 
     props = {
         "user": os.getenv("POSTGRES_USER", "netpulse"),
