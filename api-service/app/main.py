@@ -4,7 +4,7 @@ import os
 import json
 from datetime import datetime, timedelta, timezone
 from ipaddress import ip_address
-from typing import List, Optional
+from typing import List, Optional, Dict
 from uuid import UUID
 
 import httpx
