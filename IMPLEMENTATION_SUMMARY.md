@@ -4,7 +4,8 @@
 
 **Branch Name:** `feature/session-management-improvements`  
 **Status:** ✅ Committed and Ready  
-**Changes:** 8 files | 1,517 insertions | 49 deletions
+**Changes:** 10 files | 2,345 insertions | 49 deletions
+**Latest Addition:** DNS Resolution Feature
 
 ---
 
@@ -32,6 +33,12 @@ Fields:
 
 ### 2️⃣ **Backend API Endpoints** (`api-service/app/main.py`)
 
+**NEW DNS Resolution Endpoint:**
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| `GET` | `/resolve/{target}` | Resolve domain to IP address(es) |
+
 **NEW Session Management Endpoints:**
 
 | Method | Endpoint | Purpose |
@@ -48,6 +55,7 @@ Fields:
 - Comprehensive error handling
 - Database transaction management
 - Query optimization with indexes
+- DNS resolution with multi-IP support
 - Automatic timestamp management
 - Session filtering capabilities
 
@@ -98,10 +106,23 @@ Functions:
 - Improved layout (3-column responsive)
 - Better state management
 - New dialogs and components
+- DNS resolution functionality:
+  - resolveDNS() function for API calls
+  - Auto-resolution on target add/session switch
+  - Manual DNS lookup via button
+  - DNS info card display
 
 ---
 
 ## 🎯 Key Features Implemented
+
+### ✅ DNS Resolution
+- ✅ Resolve domain names to IP addresses
+- ✅ Show all IPs for multi-resolve domains
+- ✅ Auto-resolution on target add
+- ✅ Manual DNS lookup button
+- ✅ Error handling (NXDOMAIN, no A records, etc.)
+- ✅ Visual display with primary IP highlighted
 
 ### ✅ Session Management
 - ✅ Create sessions with metadata
@@ -145,6 +166,7 @@ Functions:
 
 | Issue | Before | After |
 |-------|--------|-------|
+| DNS Resolution | ❌ Unknown IP | ✅ Shows resolved IP(s) |
 | Data Loss on Refresh | ❌ Data lost | ✅ Persisted via localStorage |
 | Session Tracking | ❌ No tracking | ✅ Full session management |
 | Session Deletion | ❌ Impossible | ✅ Delete with cascade |

@@ -20,22 +20,31 @@ This branch introduces comprehensive session management, data persistence, and e
 - **Refresh Recovery**: No more data loss on page refresh
 - **Automatic Cleanup**: Prevents storage overflow by limiting sample history
 
-### 3. **Enhanced UI/UX**
+### 3. **DNS Resolution Lookup**
+- **Domain to IP Mapping**: See which IP address a domain resolves to
+- **Multiple IP Detection**: Shows all resolved IPs if domain has multiple records
+- **Auto-Resolution**: Automatically resolves DNS when adding targets or switching sessions
+- **Manual Lookup**: Click "🔍 DNS" button to resolve any target
+- **Visual Display**: Primary IP highlighted in cyan with all alternatives listed
+- **Error Handling**: Clear messages for NXDOMAIN, missing A records, or DNS failures
+
+### 4. **Enhanced UI/UX**
 - **Responsive Layout**: Three-column layout with sessions sidebar
 - **Session Panel**: Dedicated left sidebar showing all sessions
 - **Status Indicators**: Visual status badges (active/paused/stopped)
 - **Session Details**: Expandable session cards showing statistics
 - **Session Selector**: Dropdown to quickly switch between sessions
 - **Improved Controls**: Better organized monitoring controls
+- **DNS Info Card**: Displays resolved IP information with resolver type
 
-### 4. **Advanced Export Features**
+### 5. **Advanced Export Features**
 - **Multi-format Export**: Export as CSV (spreadsheet) or JSON (data integration)
 - **Session-specific Export**: Select which session to export
 - **Export Dialog**: Dedicated interface for export configuration
 - **Data Integrity**: Includes all metrics and timestamps
 - **Batch Operations**: Export multiple sessions
 
-### 5. **Session Statistics**
+### 6. **Session Statistics**
 - **Duration Tracking**: See how long each session ran
 - **Aggregated Metrics**: Average, min, max latency and packet loss
 - **Record Count**: Total number of metrics collected
@@ -66,6 +75,12 @@ This branch introduces comprehensive session management, data persistence, and e
 - Cascade delete support (deleting session removes its metrics)
 
 ### API Endpoints
+
+#### DNS Resolution
+- `GET /resolve/{target}` - Resolve domain name to IP address(es)
+  - Returns primary IP and list of all resolved IPs
+  - Handles both IP addresses (validation) and domains (DNS lookup)
+  - Error handling for NXDOMAIN, missing A records, DNS failures
 
 #### Session Management
 - `POST /sessions` - Create new session
