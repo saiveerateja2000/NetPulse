@@ -1,8 +1,13 @@
 import os
+import logging
 
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, from_json, to_timestamp
 from pyspark.sql.types import DoubleType, IntegerType, StringType, StructField, StructType
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("spark-streaming")
 
 SPARK_EXTRA_JARS = os.getenv(
     "SPARK_EXTRA_JARS",
@@ -22,25 +27,37 @@ SPARK_EXTRA_JARS = os.getenv(
 
 def write_to_postgres(batch_df, batch_id):
     if batch_df.isEmpty():
+        logger.debug(f"Batch {batch_id} is empty, skipping...")
         return
 
-    # Rename 'timestamp' column to 'ts' and cast to TIMESTAMPTZ to match the postgres schema
-    batch_df = batch_df.withColumn("ts", to_timestamp(col("timestamp"))).drop("timestamp")
+    try:
+        logger.info(f"Writing batch {batch_id} with {batch_df.count()} records to PostgreSQL...")
+        # Rename 'timestamp' column to 'ts' and cast to TIMESTAMPTZ to match the postgres schema
+        batch_df = batch_df.withColumn("ts", to_timestamp(col("timestamp"))).drop("timestamp")
 
-    props = {
-        "user": os.getenv("POSTGRES_USER", "netpulse"),
-        "password": os.getenv("POSTGRES_PASSWORD", "netpulse"),
-        "driver": "org.postgresql.Driver",
-    }
-    jdbc_url = (
-        f"jdbc:postgresql://{os.getenv('POSTGRES_HOST', 'postgres')}:{os.getenv('POSTGRES_PORT', '5432')}"
-        f"/{os.getenv('POSTGRES_DB', 'netpulse')}"
-    )
+        props = {
+            "user": os.getenv("POSTGRES_USER", "netpulse"),
+            "password": os.getenv("POSTGRES_PASSWORD", "netpulse"),
+            "driver": "org.postgresql.Driver",
+        }
+        jdbc_url = (
+            f"jdbc:postgresql://{os.getenv('POSTGRES_HOST', 'postgres')}:{os.getenv('POSTGRES_PORT', '5432')}"
+            f"/{os.getenv('POSTGRES_DB', 'netpulse')}"
+        )
 
-    batch_df.write.mode("append").jdbc(url=jdbc_url, table="telemetry_metrics", properties=props)
+        batch_df.write.mode("append").jdbc(url=jdbc_url, table="telemetry_metrics", properties=props)
+        logger.info(f"Successfully wrote batch {batch_id} to PostgreSQL")
+    except Exception as e:
+        logger.error(f"Failed to write batch {batch_id} to PostgreSQL: {e}", exc_info=True)
+        raise
 
 
 def main():
+    logger.info("Starting Spark Streaming service...")
+    logger.info(f"Kafka Bootstrap Servers: {os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'kafka:29092')}")
+    logger.info(f"Kafka Topic: {os.getenv('KAFKA_TOPIC', 'netpulse.telemetry')}")
+    logger.info(f"PostgreSQL Host: {os.getenv('POSTGRES_HOST', 'postgres')}")
+    
     schema = StructType(
         [
             StructField("target", StringType()),
@@ -57,33 +74,43 @@ def main():
         ]
     )
 
-    spark = (
-        SparkSession.builder.appName("NetPulseStreaming")
-        .master("local[1]")
-        .config("spark.sql.shuffle.partitions", "1")
-        .config("spark.jars", SPARK_EXTRA_JARS)
-        .getOrCreate()
-    )
-    spark.sparkContext.setLogLevel("WARN")
+    try:
+        logger.info("Creating Spark session...")
+        spark = (
+            SparkSession.builder.appName("NetPulseStreaming")
+            .master("local[1]")
+            .config("spark.sql.shuffle.partitions", "1")
+            .config("spark.jars", SPARK_EXTRA_JARS)
+            .getOrCreate()
+        )
+        spark.sparkContext.setLogLevel("WARN")
+        logger.info("Spark session created successfully")
 
-    raw_stream = (
-        spark.readStream.format("kafka")
-        .option("kafka.bootstrap.servers", os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092"))
-        .option("subscribe", os.getenv("KAFKA_TOPIC", "netpulse.telemetry"))
-        .option("startingOffsets", "latest")
-        .load()
-    )
+        logger.info("Connecting to Kafka topic...")
+        raw_stream = (
+            spark.readStream.format("kafka")
+            .option("kafka.bootstrap.servers", os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092"))
+            .option("subscribe", os.getenv("KAFKA_TOPIC", "netpulse.telemetry"))
+            .option("startingOffsets", "latest")
+            .load()
+        )
+        logger.info("Successfully connected to Kafka")
 
-    parsed = raw_stream.select(from_json(col("value").cast("string"), schema).alias("m")).select("m.*")
+        parsed = raw_stream.select(from_json(col("value").cast("string"), schema).alias("m")).select("m.*")
 
-    query = (
-        parsed.writeStream.outputMode("append")
-        .foreachBatch(write_to_postgres)
-        .option("checkpointLocation", "/tmp/netpulse-checkpoint")
-        .start()
-    )
-
-    query.awaitTermination()
+        logger.info("Starting streaming query...")
+        query = (
+            parsed.writeStream.outputMode("append")
+            .foreachBatch(write_to_postgres)
+            .option("checkpointLocation", "/tmp/netpulse-checkpoint")
+            .start()
+        )
+        
+        logger.info("Spark Streaming service is running...")
+        query.awaitTermination()
+    except Exception as e:
+        logger.error(f"Fatal error in Spark Streaming service: {e}", exc_info=True)
+        raise
 
 
 if __name__ == "__main__":

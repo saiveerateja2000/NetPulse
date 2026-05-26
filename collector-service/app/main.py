@@ -25,6 +25,14 @@ logging.basicConfig(level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(
 logger = logging.getLogger("collector")
 
 
+@app.on_event("startup")
+async def startup_event():
+    logger.info("NetPulse Collector Service starting up...")
+    logger.info(f"Kafka Bootstrap Servers: {KAFKA_BOOTSTRAP_SERVERS}")
+    logger.info(f"Kafka Topic: {KAFKA_TOPIC}")
+    logger.info("Collector service is ready to accept monitoring requests")
+
+
 class TargetRequest(BaseModel):
     target: str
 
@@ -60,18 +68,23 @@ class Collector:
         self.bytes_recv_last = psutil.net_io_counters().bytes_recv
 
     def _producer(self) -> Optional[KafkaProducer]:
-        for _ in range(5):
+        for attempt in range(5):
             try:
-                return KafkaProducer(
+                logger.info(f"Attempting to create Kafka producer (attempt {attempt + 1}/5)")
+                producer = KafkaProducer(
                     bootstrap_servers=[KAFKA_BOOTSTRAP_SERVERS],
                     value_serializer=lambda v: json.dumps(v).encode("utf-8"),
                     api_version=(0, 10, 2),
                     max_block_ms=5000,
                     request_timeout_ms=5000,
                 )
+                logger.info("Kafka producer created successfully")
+                return producer
             except Exception as e:
-                logger.exception("Failed to create Kafka producer, retrying")
-                time.sleep(2)
+                logger.warning(f"Failed to create Kafka producer (attempt {attempt + 1}/5): {e}")
+                if attempt < 4:
+                    time.sleep(2)
+        logger.error("Failed to create Kafka producer after 5 attempts")
         return None
 
     def start(self, target: str) -> None:
@@ -112,6 +125,14 @@ class Collector:
 
     def _monitor_loop(self, target: str) -> None:
         producer = self._producer()
+        if not producer:
+            logger.warning(f"Cannot start monitoring for {target}: Kafka producer unavailable")
+            with self.lock:
+                session = self.sessions.get(target)
+                if session:
+                    session.running = False
+            return
+            
         latency_history: List[float] = []
 
         while True:
@@ -224,14 +245,26 @@ def sessions() -> List[Dict]:
 
 @app.post("/monitoring/start")
 def start_monitoring(request: TargetRequest) -> Dict[str, str]:
-    collector.start(request.target)
-    return {"status": "started", "target": request.target}
+    try:
+        logger.info(f"Starting monitoring for target: {request.target}")
+        collector.start(request.target)
+        logger.info(f"Successfully started monitoring for target: {request.target}")
+        return {"status": "started", "target": request.target}
+    except Exception as e:
+        logger.error(f"Failed to start monitoring for target {request.target}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to start monitoring: {str(e)}") from e
 
 
 @app.post("/monitoring/stop")
 def stop_monitoring(request: TargetRequest) -> Dict[str, str]:
-    collector.stop(request.target)
-    return {"status": "stopped", "target": request.target}
+    try:
+        logger.info(f"Stopping monitoring for target: {request.target}")
+        collector.stop(request.target)
+        logger.info(f"Successfully stopped monitoring for target: {request.target}")
+        return {"status": "stopped", "target": request.target}
+    except Exception as e:
+        logger.error(f"Failed to stop monitoring for target {request.target}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to stop monitoring: {str(e)}") from e
 
 
 @app.get("/metrics/{target}")

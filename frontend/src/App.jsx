@@ -18,37 +18,56 @@ function App() {
 
   const addTarget = async () => {
     setError('')
+    setStatus(`Adding target ${target}...`)
     try {
       await axios.post(`${API_BASE}/targets`, { target })
-      setStatus(`Target ${target} added`)
+      setStatus(`✓ Target ${target} added`)
       setActiveTarget(target)
     } catch (e) {
-      setError(e?.response?.data?.detail || 'Failed to add target')
+      const errorMsg = e?.response?.data?.detail || e?.message || 'Failed to add target'
+      setError(errorMsg)
+      setStatus('idle')
+      console.error('Add target error:', e)
     }
   }
 
   const start = async () => {
     setError('')
+    setStatus(`Starting monitoring for ${activeTarget}...`)
     try {
-      await axios.post(`${API_BASE}/monitoring/start`, { target: activeTarget })
-      setStatus(`Monitoring ${activeTarget}`)
+      const response = await axios.post(`${API_BASE}/monitoring/start`, { target: activeTarget })
+      setStatus(`✓ Monitoring started for ${activeTarget}`)
+      // Start polling for live metrics
+      const pollInterval = setInterval(fetchLive, 2000)
+      return () => clearInterval(pollInterval)
     } catch (e) {
-      setError(e?.response?.data?.detail || 'Failed to start monitoring')
+      const errorMsg = e?.response?.data?.detail || e?.message || 'Failed to start monitoring'
+      setError(errorMsg)
+      setStatus('idle')
+      console.error('Start monitoring error:', e)
     }
   }
 
   const stop = async () => {
     setError('')
+    setStatus(`Stopping monitoring for ${activeTarget}...`)
     try {
       await axios.post(`${API_BASE}/monitoring/stop`, { target: activeTarget })
-      setStatus(`Stopped ${activeTarget}`)
+      setStatus(`✓ Monitoring stopped for ${activeTarget}`)
+      setSamples([])
     } catch (e) {
-      setError(e?.response?.data?.detail || 'Failed to stop monitoring')
+      const errorMsg = e?.response?.data?.detail || e?.message || 'Failed to stop monitoring'
+      setError(errorMsg)
+      setStatus('idle')
+      console.error('Stop monitoring error:', e)
     }
   }
 
   const fetchLive = async () => {
-    if (!activeTarget) return
+    if (!activeTarget) {
+      setError('Please select a target first')
+      return
+    }
     try {
       const { data } = await axios.get(`${API_BASE}/metrics/live/${activeTarget}`)
       const point = {
@@ -58,17 +77,25 @@ function App() {
         jitter: data.jitter,
       }
       setSamples((prev) => [...prev.slice(-29), point])
-    } catch {
-      // no sample yet
+      setError('')
+    } catch (e) {
+      if (e?.response?.status !== 404) {
+        const errorMsg = e?.response?.data?.detail || e?.message || 'Failed to fetch metrics'
+        setError(errorMsg)
+        console.error('Fetch live metrics error:', e)
+      }
     }
   }
 
   const fetchEvents = async () => {
     try {
       const { data } = await axios.get(`${API_BASE}/stream/events`)
-      setStatus(`Kafka stream topic: ${data.topic}`)
-    } catch {
-      // keep prior status
+      setStatus(`✓ Kafka stream topic: ${data.topic} (${data.sessions.length} active sessions)`)
+      setError('')
+    } catch (e) {
+      const errorMsg = e?.response?.data?.detail || e?.message || 'Failed to fetch stream events'
+      setError(errorMsg)
+      console.error('Fetch events error:', e)
     }
   }
 

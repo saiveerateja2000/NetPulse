@@ -2,6 +2,19 @@
 
 NetPulse is a lightweight, open-source real-time network telemetry and analytics platform designed for local laptop execution (8GB RAM target).
 
+## 🚀 Recent Updates (Fixed & Enhanced)
+
+**All critical business logic issues have been fixed!** ✅
+
+- ✅ Fixed "Failed to start monitoring" errors
+- ✅ Fixed "Failed to stop monitoring" errors
+- ✅ Added comprehensive error handling and logging
+- ✅ Improved Kafka connection validation
+- ✅ Enhanced timeouts and reliability
+- ✅ Better user feedback in UI
+
+See [FIXES_APPLIED.md](FIXES_APPLIED.md) for detailed changes.
+
 ## Tech Stack
 
 - **Frontend**: React, Tailwind CSS, Recharts
@@ -25,7 +38,6 @@ NetPulse is a lightweight, open-source real-time network telemetry and analytics
 - `docs/`
 
 ## Run Locally
-## Run Locally
 
 See [guide.md](guide.md) for step-by-step instructions to build, run and test the stack with Docker Compose.
 
@@ -47,6 +59,14 @@ Endpoints:
 - Kafka stream event visibility
 - Historical metric storage in PostgreSQL
 - Export CSV reports per target
+
+## Documentation
+
+- [NEXT_STEPS.md](NEXT_STEPS.md) - Quick start after fixes
+- [FIXES_APPLIED.md](FIXES_APPLIED.md) - Detailed technical changes
+- [CODE_CHANGES_SUMMARY.md](CODE_CHANGES_SUMMARY.md) - Visual summary of code changes
+- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Common issues and solutions
+- [VERIFICATION_CHECKLIST.md](VERIFICATION_CHECKLIST.md) - Post-deployment verification
 
 ## Notes
 

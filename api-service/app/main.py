@@ -98,6 +98,13 @@ class TargetState(BaseModel):
 TARGETS: dict[str, TargetState] = {}
 
 
+@app.on_event("startup")
+async def startup_event():
+    logger.info("NetPulse API Service starting up...")
+    logger.info(f"Collector Base URL: {COLLECTOR_BASE_URL}")
+    logger.info("API service is ready to accept requests")
+
+
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "api"}
@@ -120,11 +127,17 @@ def start_monitoring(request: TargetRequest):
         TARGETS[request.target] = TargetState(target=request.target)
 
     try:
-        with httpx.Client(timeout=5) as client:
+        logger.info(f"Starting monitoring for target: {request.target}")
+        with httpx.Client(timeout=10) as client:
             response = client.post(f"{COLLECTOR_BASE_URL}/monitoring/start", json=request.model_dump())
         response.raise_for_status()
+        logger.info(f"Successfully started monitoring for target: {request.target}")
     except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"Collector unavailable: {exc}") from exc
+        logger.error(f"Collector error when starting monitoring for {request.target}: {exc}")
+        raise HTTPException(status_code=502, detail=f"Collector service error: {str(exc)}") from exc
+    except Exception as exc:
+        logger.error(f"Unexpected error starting monitoring for {request.target}: {exc}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(exc)}") from exc
 
     TARGETS[request.target].active = True
     return {"status": "started", "target": request.target}
@@ -133,11 +146,17 @@ def start_monitoring(request: TargetRequest):
 @app.post("/monitoring/stop")
 def stop_monitoring(request: TargetRequest):
     try:
-        with httpx.Client(timeout=5) as client:
+        logger.info(f"Stopping monitoring for target: {request.target}")
+        with httpx.Client(timeout=10) as client:
             response = client.post(f"{COLLECTOR_BASE_URL}/monitoring/stop", json=request.model_dump())
         response.raise_for_status()
+        logger.info(f"Successfully stopped monitoring for target: {request.target}")
     except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"Collector unavailable: {exc}") from exc
+        logger.error(f"Collector error when stopping monitoring for {request.target}: {exc}")
+        raise HTTPException(status_code=502, detail=f"Collector service error: {str(exc)}") from exc
+    except Exception as exc:
+        logger.error(f"Unexpected error stopping monitoring for {request.target}: {exc}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(exc)}") from exc
 
     if request.target in TARGETS:
         TARGETS[request.target].active = False
@@ -148,14 +167,22 @@ def stop_monitoring(request: TargetRequest):
 @app.get("/metrics/live/{target}")
 def get_live_metrics(target: str):
     try:
-        with httpx.Client(timeout=5) as client:
+        logger.debug(f"Fetching live metrics for target: {target}")
+        with httpx.Client(timeout=10) as client:
             response = client.get(f"{COLLECTOR_BASE_URL}/metrics/{target}")
+        if response.status_code == 404:
+            logger.warning(f"No live metrics found for target: {target}")
+            raise HTTPException(status_code=404, detail="No live metric for target")
+        response.raise_for_status()
+        logger.debug(f"Successfully fetched live metrics for target: {target}")
+        return response.json()
     except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"Collector unavailable: {exc}") from exc
-    if response.status_code == 404:
-        raise HTTPException(status_code=404, detail="No live metric for target")
-    response.raise_for_status()
-    return response.json()
+        if response.status_code != 404:
+            logger.error(f"Collector error fetching metrics for {target}: {exc}")
+            raise HTTPException(status_code=502, detail=f"Collector service error: {str(exc)}") from exc
+    except Exception as exc:
+        logger.error(f"Unexpected error fetching metrics for {target}: {exc}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(exc)}") from exc
 
 
 @app.get("/metrics/history/{target}")
@@ -171,11 +198,14 @@ def get_history(target: str, limit: int = 100):
     """
 
     try:
+        logger.debug(f"Fetching history for target: {target} (limit: {limit})")
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(query, (target, limit))
                 rows = cursor.fetchall()
+        logger.debug(f"Successfully fetched {len(rows)} history records for target: {target}")
     except psycopg2.Error as exc:
+        logger.error(f"Database error fetching history for {target}: {exc}")
         raise HTTPException(status_code=500, detail=f"Database error: {exc}") from exc
 
     return [
@@ -200,25 +230,37 @@ def get_history(target: str, limit: int = 100):
 def stream_events():
     sessions_url = f"{COLLECTOR_BASE_URL}/sessions"
     try:
-        with httpx.Client(timeout=5) as client:
+        logger.debug("Fetching stream events from collector...")
+        with httpx.Client(timeout=10) as client:
             response = client.get(sessions_url)
         response.raise_for_status()
+        logger.debug("Successfully fetched stream events")
+        return {"topic": os.getenv("KAFKA_TOPIC", "netpulse.telemetry"), "sessions": response.json()}
     except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"Collector unavailable: {exc}") from exc
-    return {"topic": os.getenv("KAFKA_TOPIC", "netpulse.telemetry"), "sessions": response.json()}
+        logger.error(f"Collector error fetching stream events: {exc}")
+        raise HTTPException(status_code=502, detail=f"Collector service error: {str(exc)}") from exc
+    except Exception as exc:
+        logger.error(f"Unexpected error fetching stream events: {exc}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(exc)}") from exc
 
 
 @app.get("/reports/export/{target}")
 def export_report(target: str):
-    history = get_history(target, limit=500)
-    output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=list(history[0].keys()) if history else ["target", "timestamp"])
-    writer.writeheader()
-    for row in history:
-        writer.writerow(row)
-
-    return StreamingResponse(
-        iter([output.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename={target}-report.csv"},
-    )
+    try:
+        logger.info(f"Exporting report for target: {target}")
+        history = get_history(target, limit=500)
+        output = io.StringIO()
+        fieldnames = list(history[0].keys()) if history else ["target", "latency_ms", "packet_loss", "jitter", "dns_lookup_time", "cpu_usage", "memory_usage", "bandwidth_usage", "active_connections", "traceroute_hops", "timestamp"]
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in history:
+            writer.writerow(row)
+        logger.info(f"Successfully exported report for target: {target} ({len(history)} records)")
+        return StreamingResponse(
+            iter([output.getvalue()]),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={target}-report.csv"},
+        )
+    except Exception as exc:
+        logger.error(f"Error exporting report for {target}: {exc}")
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(exc)}") from exc
