@@ -446,15 +446,3 @@ function MetricCard({ title, value }) {
 }
 
 export default App
-
-
-function MetricCard({ title, value }) {
-  return (
-    <div className="rounded-lg border border-slate-700 bg-slate-900 p-4">
-      <p className="text-xs uppercase tracking-wide text-slate-400">{title}</p>
-      <p className="mt-2 text-2xl font-semibold">{value}</p>
-    </div>
-  )
-}
-
-export default App
