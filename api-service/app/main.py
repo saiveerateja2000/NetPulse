@@ -151,6 +151,79 @@ class SessionStats(BaseModel):
     metrics: SessionMetrics
 
 
+# New diagnostic models
+class TracerouteRequest(BaseModel):
+    target: str
+
+    @field_validator("target")
+    @classmethod
+    def validate_target(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not value:
+            raise ValueError("target cannot be empty")
+        return value
+
+
+class TracerouteResult(BaseModel):
+    target: str
+    target_ip: Optional[str] = None
+    success: bool
+    hops: List[Dict] = []
+    total_hops: int = 0
+    error: Optional[str] = None
+    timestamp: Optional[datetime] = None
+
+
+class HTTPCheckRequest(BaseModel):
+    target: str
+    use_https: bool = False
+
+    @field_validator("target")
+    @classmethod
+    def validate_target(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not value:
+            raise ValueError("target cannot be empty")
+        return value
+
+
+class HTTPCheckResult(BaseModel):
+    target: str
+    url: str
+    status_code: Optional[int] = None
+    response_time_ms: Optional[float] = None
+    ssl_valid: Optional[bool] = None
+    ssl_expiry_date: Optional[str] = None
+    success: bool
+    error_message: Optional[str] = None
+    timestamp: Optional[datetime] = None
+
+
+class BandwidthTestRequest(BaseModel):
+    target: str
+    test_size_mb: float = 10.0
+
+    @field_validator("target")
+    @classmethod
+    def validate_target(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not value:
+            raise ValueError("target cannot be empty")
+        return value
+
+
+class BandwidthTestResult(BaseModel):
+    target: str
+    test_size_mb: float
+    bytes_transferred: Optional[int] = None
+    download_speed_mbps: Optional[float] = None
+    upload_speed_mbps: Optional[float] = None
+    test_duration_seconds: float
+    success: bool
+    error_message: Optional[str] = None
+    timestamp: Optional[datetime] = None
+
+
 TARGETS: dict[str, TargetState] = {}
 
 
@@ -377,6 +450,260 @@ def export_report(target: str):
     except Exception as exc:
         logger.error(f"Error exporting report for {target}: {exc}")
         raise HTTPException(status_code=500, detail=f"Export failed: {str(exc)}") from exc
+
+
+# ==================== NEW DIAGNOSTIC ENDPOINTS ====================
+
+@app.post("/diagnostics/traceroute")
+def run_traceroute(request: TracerouteRequest) -> TracerouteResult:
+    """Execute a full traceroute to the target and save results to database"""
+    try:
+        logger.info(f"Traceroute requested for {request.target}")
+        
+        # Call collector service
+        with httpx.Client(timeout=120) as client:
+            response = client.post(
+                f"{COLLECTOR_BASE_URL}/diagnostics/traceroute",
+                json={"target": request.target}
+            )
+        response.raise_for_status()
+        result = response.json()
+        
+        # Save to database
+        if result.get("success"):
+            try:
+                query = """
+                    INSERT INTO traceroute_results (target, hops, total_hops, success)
+                    VALUES (%s, %s, %s, %s)
+                """
+                with get_db_connection() as conn:
+                    with conn.cursor() as cursor:
+                        cursor.execute(
+                            query,
+                            (
+                                request.target,
+                                json.dumps(result.get("hops", [])),
+                                result.get("total_hops", 0),
+                                result.get("success", False)
+                            )
+                        )
+                        conn.commit()
+                logger.info(f"Traceroute result saved for {request.target}")
+            except psycopg2.Error as db_err:
+                logger.warning(f"Failed to save traceroute result: {db_err}")
+        
+        return result
+    except httpx.HTTPError as exc:
+        logger.error(f"Collector error during traceroute: {exc}")
+        raise HTTPException(status_code=502, detail=f"Collector service error: {str(exc)}") from exc
+    except Exception as exc:
+        logger.error(f"Traceroute error: {exc}")
+        raise HTTPException(status_code=500, detail=f"Traceroute failed: {str(exc)}") from exc
+
+
+@app.post("/diagnostics/http-check")
+def run_http_check(request: HTTPCheckRequest) -> HTTPCheckResult:
+    """Check HTTP/HTTPS status and response time for target"""
+    try:
+        logger.info(f"HTTP check requested for {request.target}")
+        
+        # Call collector service
+        with httpx.Client(timeout=30) as client:
+            response = client.post(
+                f"{COLLECTOR_BASE_URL}/diagnostics/http-check",
+                json={"target": request.target, "use_https": request.use_https}
+            )
+        response.raise_for_status()
+        result = response.json()
+        
+        # Save to database
+        try:
+            query = """
+                INSERT INTO http_check_results (target, url, status_code, response_time_ms, ssl_valid, ssl_expiry_date, success, error_message)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """
+            with get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        query,
+                        (
+                            request.target,
+                            result.get("url"),
+                            result.get("status_code"),
+                            result.get("response_time_ms"),
+                            result.get("ssl_valid"),
+                            result.get("ssl_expiry_date"),
+                            result.get("success", False),
+                            result.get("error_message")
+                        )
+                    )
+                    conn.commit()
+            logger.info(f"HTTP check result saved for {request.target}")
+        except psycopg2.Error as db_err:
+            logger.warning(f"Failed to save HTTP check result: {db_err}")
+        
+        return result
+    except httpx.HTTPError as exc:
+        logger.error(f"Collector error during HTTP check: {exc}")
+        raise HTTPException(status_code=502, detail=f"Collector service error: {str(exc)}") from exc
+    except Exception as exc:
+        logger.error(f"HTTP check error: {exc}")
+        raise HTTPException(status_code=500, detail=f"HTTP check failed: {str(exc)}") from exc
+
+
+@app.post("/diagnostics/bandwidth-test")
+def run_bandwidth_test(request: BandwidthTestRequest) -> BandwidthTestResult:
+    """Perform a bandwidth test to target"""
+    try:
+        logger.info(f"Bandwidth test requested for {request.target}")
+        
+        # Call collector service
+        with httpx.Client(timeout=300) as client:
+            response = client.post(
+                f"{COLLECTOR_BASE_URL}/diagnostics/bandwidth-test",
+                json={"target": request.target, "test_size_mb": request.test_size_mb}
+            )
+        response.raise_for_status()
+        result = response.json()
+        
+        # Save to database
+        try:
+            query = """
+                INSERT INTO bandwidth_test_results (target, test_size_mb, download_speed_mbps, upload_speed_mbps, test_duration_seconds, success, error_message)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """
+            with get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        query,
+                        (
+                            request.target,
+                            request.test_size_mb,
+                            result.get("download_speed_mbps"),
+                            result.get("upload_speed_mbps"),
+                            result.get("test_duration_seconds"),
+                            result.get("success", False),
+                            result.get("error_message")
+                        )
+                    )
+                    conn.commit()
+            logger.info(f"Bandwidth test result saved for {request.target}")
+        except psycopg2.Error as db_err:
+            logger.warning(f"Failed to save bandwidth test result: {db_err}")
+        
+        return result
+    except httpx.HTTPError as exc:
+        logger.error(f"Collector error during bandwidth test: {exc}")
+        raise HTTPException(status_code=502, detail=f"Collector service error: {str(exc)}") from exc
+    except Exception as exc:
+        logger.error(f"Bandwidth test error: {exc}")
+        raise HTTPException(status_code=500, detail=f"Bandwidth test failed: {str(exc)}") from exc
+
+
+@app.get("/diagnostics/traceroute/{target}")
+def get_traceroute_history(target: str, limit: int = 10) -> List[Dict]:
+    """Get traceroute history for a target"""
+    try:
+        query = """
+            SELECT target, hops, total_hops, completed_at, success
+            FROM traceroute_results
+            WHERE target = %s
+            ORDER BY completed_at DESC
+            LIMIT %s
+        """
+        
+        logger.debug(f"Fetching traceroute history for {target}")
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query, (target, limit))
+                rows = cursor.fetchall()
+        
+        return [
+            {
+                "target": row[0],
+                "hops": json.loads(row[1]) if row[1] else [],
+                "total_hops": row[2],
+                "completed_at": row[3].isoformat() if row[3] else None,
+                "success": row[4]
+            }
+            for row in rows
+        ]
+    except psycopg2.Error as exc:
+        logger.error(f"Database error fetching traceroute history: {exc}")
+        raise HTTPException(status_code=500, detail=f"Database error: {exc}") from exc
+
+
+@app.get("/diagnostics/http-check/{target}")
+def get_http_check_history(target: str, limit: int = 10) -> List[Dict]:
+    """Get HTTP check history for a target"""
+    try:
+        query = """
+            SELECT target, url, status_code, response_time_ms, ssl_valid, ssl_expiry_date, success, error_message, checked_at
+            FROM http_check_results
+            WHERE target = %s
+            ORDER BY checked_at DESC
+            LIMIT %s
+        """
+        
+        logger.debug(f"Fetching HTTP check history for {target}")
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query, (target, limit))
+                rows = cursor.fetchall()
+        
+        return [
+            {
+                "target": row[0],
+                "url": row[1],
+                "status_code": row[2],
+                "response_time_ms": row[3],
+                "ssl_valid": row[4],
+                "ssl_expiry_date": row[5],
+                "success": row[6],
+                "error_message": row[7],
+                "checked_at": row[8].isoformat() if row[8] else None
+            }
+            for row in rows
+        ]
+    except psycopg2.Error as exc:
+        logger.error(f"Database error fetching HTTP check history: {exc}")
+        raise HTTPException(status_code=500, detail=f"Database error: {exc}") from exc
+
+
+@app.get("/diagnostics/bandwidth-test/{target}")
+def get_bandwidth_test_history(target: str, limit: int = 10) -> List[Dict]:
+    """Get bandwidth test history for a target"""
+    try:
+        query = """
+            SELECT target, test_size_mb, download_speed_mbps, upload_speed_mbps, test_duration_seconds, success, error_message, tested_at
+            FROM bandwidth_test_results
+            WHERE target = %s
+            ORDER BY tested_at DESC
+            LIMIT %s
+        """
+        
+        logger.debug(f"Fetching bandwidth test history for {target}")
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query, (target, limit))
+                rows = cursor.fetchall()
+        
+        return [
+            {
+                "target": row[0],
+                "test_size_mb": row[1],
+                "download_speed_mbps": row[2],
+                "upload_speed_mbps": row[3],
+                "test_duration_seconds": row[4],
+                "success": row[5],
+                "error_message": row[6],
+                "tested_at": row[7].isoformat() if row[7] else None
+            }
+            for row in rows
+        ]
+    except psycopg2.Error as exc:
+        logger.error(f"Database error fetching bandwidth test history: {exc}")
+        raise HTTPException(status_code=500, detail=f"Database error: {exc}") from exc
 
 
 # ==================== NEW SESSION MANAGEMENT ENDPOINTS ====================

@@ -45,3 +45,50 @@ ON monitoring_sessions(target);
 
 CREATE INDEX IF NOT EXISTS monitoring_sessions_status_idx
 ON monitoring_sessions(status);
+
+-- Traceroute results table
+CREATE TABLE IF NOT EXISTS traceroute_results (
+    id SERIAL PRIMARY KEY,
+    target VARCHAR(255) NOT NULL,
+    hops JSONB NOT NULL,  -- Array of {hop_number, ip, latency_ms, hostname}
+    total_hops INTEGER,
+    completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    success BOOLEAN DEFAULT TRUE
+);
+
+-- HTTP Status Check results table
+CREATE TABLE IF NOT EXISTS http_check_results (
+    id SERIAL PRIMARY KEY,
+    target VARCHAR(255) NOT NULL,
+    url VARCHAR(500) NOT NULL,
+    status_code INTEGER,
+    response_time_ms DOUBLE PRECISION,
+    ssl_valid BOOLEAN,
+    ssl_expiry_date VARCHAR(50),
+    success BOOLEAN DEFAULT TRUE,
+    error_message TEXT,
+    checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Bandwidth test results table
+CREATE TABLE IF NOT EXISTS bandwidth_test_results (
+    id SERIAL PRIMARY KEY,
+    target VARCHAR(255) NOT NULL,
+    test_size_mb DOUBLE PRECISION NOT NULL,
+    download_speed_mbps DOUBLE PRECISION,
+    upload_speed_mbps DOUBLE PRECISION,
+    test_duration_seconds DOUBLE PRECISION,
+    success BOOLEAN DEFAULT TRUE,
+    error_message TEXT,
+    tested_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Indexes for performance
+CREATE INDEX IF NOT EXISTS traceroute_results_target_idx
+ON traceroute_results(target);
+
+CREATE INDEX IF NOT EXISTS http_check_results_target_idx
+ON http_check_results(target);
+
+CREATE INDEX IF NOT EXISTS bandwidth_test_results_target_idx
+ON bandwidth_test_results(target);

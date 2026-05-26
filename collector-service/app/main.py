@@ -1,6 +1,7 @@
 import json
 import os
 import socket
+import subprocess
 import threading
 import time
 from datetime import datetime, timezone
@@ -11,6 +12,8 @@ from typing import Dict, List, Optional
 import dns.resolver
 import psutil
 import logging
+import httpx
+import ssl
 from fastapi import FastAPI, HTTPException
 from kafka import KafkaProducer
 from pydantic import BaseModel, field_validator
@@ -57,6 +60,32 @@ class SessionState(BaseModel):
     target: str
     running: bool
     samples: List[Dict]
+
+
+class HTTPCheckRequest(BaseModel):
+    target: str
+    use_https: bool = False
+
+    @field_validator("target")
+    @classmethod
+    def validate_target(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not value:
+            raise ValueError("target cannot be empty")
+        return value
+
+
+class BandwidthTestRequest(BaseModel):
+    target: str
+    test_size_mb: float = 10.0  # Size in MB
+
+    @field_validator("target")
+    @classmethod
+    def validate_target(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not value:
+            raise ValueError("target cannot be empty")
+        return value
 
 
 class Collector:
@@ -229,6 +258,228 @@ class Collector:
             logger.debug("Traceroute failed for %s", target)
             return "unavailable"
 
+    def perform_traceroute(self, target: str) -> Dict:
+        """Perform a full traceroute to the target"""
+        try:
+            logger.info(f"Starting traceroute for {target}")
+            
+            # Resolve target to IP first
+            try:
+                target_ip = socket.gethostbyname(target)
+            except Exception as e:
+                logger.error(f"Failed to resolve {target}: {e}")
+                return {
+                    "target": target,
+                    "success": False,
+                    "error": f"Failed to resolve target: {str(e)}",
+                    "hops": [],
+                    "total_hops": 0
+                }
+            
+            hops = []
+            max_hops = 30
+            
+            # Use traceroute command (Linux/Mac) or tracert (Windows)
+            try:
+                if os.name == 'nt':  # Windows
+                    cmd = ['tracert', '-h', str(max_hops), target_ip]
+                else:  # Linux/Mac
+                    cmd = ['traceroute', '-m', str(max_hops), target_ip]
+                
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                lines = result.stdout.split('\n')
+                
+                for line in lines:
+                    line = line.strip()
+                    if not line or 'traceroute' in line.lower() or 'tracing' in line.lower():
+                        continue
+                    
+                    # Parse hop information
+                    try:
+                        parts = line.split()
+                        if parts and parts[0].isdigit():
+                            hop_num = int(parts[0])
+                            
+                            # Extract IP and latency
+                            ip_match = None
+                            latency_ms = None
+                            
+                            for part in parts[1:]:
+                                if '(' in part and ')' in part:
+                                    ip_match = part.strip('()')
+                                elif 'ms' in part:
+                                    try:
+                                        latency_ms = float(part.replace('ms', '').strip())
+                                    except:
+                                        pass
+                            
+                            if ip_match or hop_num:
+                                hops.append({
+                                    "hop": hop_num,
+                                    "ip": ip_match or "*",
+                                    "latency_ms": latency_ms,
+                                    "hostname": ip_match or "unknown"
+                                })
+                    except Exception as e:
+                        logger.debug(f"Failed to parse hop line: {line}, {e}")
+                        continue
+                
+                logger.info(f"Traceroute completed for {target}: {len(hops)} hops")
+                return {
+                    "target": target,
+                    "target_ip": target_ip,
+                    "success": True,
+                    "hops": hops,
+                    "total_hops": len(hops),
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }
+            except subprocess.TimeoutExpired:
+                logger.warning(f"Traceroute timeout for {target}")
+                return {
+                    "target": target,
+                    "success": False,
+                    "error": "Traceroute timeout",
+                    "hops": hops,
+                    "total_hops": len(hops)
+                }
+        except Exception as e:
+            logger.error(f"Traceroute error for {target}: {e}")
+            return {
+                "target": target,
+                "success": False,
+                "error": str(e),
+                "hops": [],
+                "total_hops": 0
+            }
+
+    def perform_http_check(self, target: str, use_https: bool = False) -> Dict:
+        """Check HTTP/HTTPS status code and response time"""
+        try:
+            logger.info(f"Starting HTTP check for {target}")
+            
+            protocol = "https" if use_https else "http"
+            url = f"{protocol}://{target}"
+            
+            start_time = time.perf_counter()
+            ssl_valid = None
+            ssl_expiry_date = None
+            status_code = None
+            response_time_ms = None
+            success = False
+            error_message = None
+            
+            try:
+                with httpx.Client(timeout=10, verify=True) as client:
+                    response = client.get(url, follow_redirects=True)
+                    response_time_ms = round((time.perf_counter() - start_time) * 1000, 2)
+                    status_code = response.status_code
+                    success = 200 <= status_code < 400
+                    
+                    # Check SSL certificate
+                    if use_https:
+                        try:
+                            context = ssl.create_default_context()
+                            with socket.create_connection((target, 443), timeout=5) as sock:
+                                with context.wrap_socket(sock, server_hostname=target) as ssock:
+                                    cert = ssock.getpeercert()
+                                    ssl_valid = True
+                                    if 'notAfter' in cert:
+                                        ssl_expiry_date = cert['notAfter']
+                        except Exception as ssl_err:
+                            ssl_valid = False
+                            logger.debug(f"SSL check failed for {target}: {ssl_err}")
+                
+            except httpx.TimeoutException:
+                error_message = "HTTP request timeout"
+                response_time_ms = round((time.perf_counter() - start_time) * 1000, 2)
+            except httpx.ConnectError as e:
+                error_message = f"Connection failed: {str(e)}"
+                response_time_ms = round((time.perf_counter() - start_time) * 1000, 2)
+            except Exception as e:
+                error_message = str(e)
+                response_time_ms = round((time.perf_counter() - start_time) * 1000, 2)
+            
+            logger.info(f"HTTP check completed for {target}: {status_code}")
+            return {
+                "target": target,
+                "url": url,
+                "status_code": status_code,
+                "response_time_ms": response_time_ms,
+                "ssl_valid": ssl_valid,
+                "ssl_expiry_date": ssl_expiry_date,
+                "success": success,
+                "error_message": error_message,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+        except Exception as e:
+            logger.error(f"HTTP check error for {target}: {e}")
+            return {
+                "target": target,
+                "url": f"{'https' if use_https else 'http'}://{target}",
+                "success": False,
+                "error_message": str(e),
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+
+    def perform_bandwidth_test(self, target: str, test_size_mb: float = 10.0) -> Dict:
+        """Perform a simple bandwidth test by downloading a file"""
+        try:
+            logger.info(f"Starting bandwidth test for {target} ({test_size_mb}MB)")
+            
+            # Use a test endpoint that serves data (we'll use httpbin or similar)
+            # For this implementation, we'll simulate with a local approach
+            test_url = f"http://{target}/api/random-data?size={int(test_size_mb * 1024 * 1024)}"
+            
+            start_time = time.perf_counter()
+            bytes_downloaded = 0
+            success = False
+            error_message = None
+            download_speed_mbps = None
+            upload_speed_mbps = None
+            
+            try:
+                with httpx.Client(timeout=60, verify=False) as client:
+                    with client.stream('GET', test_url) as response:
+                        if response.status_code == 200:
+                            for chunk in response.iter_bytes(chunk_size=8192):
+                                bytes_downloaded += len(chunk)
+                
+                elapsed_time = time.perf_counter() - start_time
+                if elapsed_time > 0:
+                    download_speed_mbps = round((bytes_downloaded / (1024 * 1024)) / elapsed_time, 2)
+                    success = True
+                    logger.info(f"Bandwidth test completed for {target}: {download_speed_mbps} Mbps")
+                else:
+                    error_message = "Test completed too quickly"
+                    
+            except Exception as e:
+                elapsed_time = time.perf_counter() - start_time
+                error_message = f"Bandwidth test failed: {str(e)}"
+                logger.warning(f"Bandwidth test error for {target}: {e}")
+                if bytes_downloaded > 0 and elapsed_time > 0:
+                    download_speed_mbps = round((bytes_downloaded / (1024 * 1024)) / elapsed_time, 2)
+            
+            return {
+                "target": target,
+                "test_size_mb": test_size_mb,
+                "bytes_transferred": bytes_downloaded,
+                "download_speed_mbps": download_speed_mbps,
+                "upload_speed_mbps": upload_speed_mbps,
+                "test_duration_seconds": round(time.perf_counter() - start_time, 2),
+                "success": success,
+                "error_message": error_message,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+        except Exception as e:
+            logger.error(f"Bandwidth test error for {target}: {e}")
+            return {
+                "target": target,
+                "test_size_mb": test_size_mb,
+                "success": False,
+                "error_message": str(e),
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+
 
 collector = Collector()
 
@@ -286,3 +537,40 @@ def get_target_stats(target: str) -> Dict:
         "avg_packet_loss": round(mean(sample["packet_loss"] for sample in samples), 2),
         "avg_jitter": round(mean(sample["jitter"] for sample in samples), 2),
     }
+
+
+# New diagnostic endpoints
+@app.post("/diagnostics/traceroute")
+def run_traceroute(request: TargetRequest) -> Dict:
+    """Execute a full traceroute to the target"""
+    try:
+        logger.info(f"Traceroute requested for {request.target}")
+        result = collector.perform_traceroute(request.target)
+        return result
+    except Exception as e:
+        logger.error(f"Traceroute error: {e}")
+        raise HTTPException(status_code=500, detail=f"Traceroute failed: {str(e)}") from e
+
+
+@app.post("/diagnostics/http-check")
+def run_http_check(request: HTTPCheckRequest) -> Dict:
+    """Check HTTP/HTTPS status and response time"""
+    try:
+        logger.info(f"HTTP check requested for {request.target}")
+        result = collector.perform_http_check(request.target, request.use_https)
+        return result
+    except Exception as e:
+        logger.error(f"HTTP check error: {e}")
+        raise HTTPException(status_code=500, detail=f"HTTP check failed: {str(e)}") from e
+
+
+@app.post("/diagnostics/bandwidth-test")
+def run_bandwidth_test(request: BandwidthTestRequest) -> Dict:
+    """Perform a bandwidth test"""
+    try:
+        logger.info(f"Bandwidth test requested for {request.target}")
+        result = collector.perform_bandwidth_test(request.target, request.test_size_mb)
+        return result
+    except Exception as e:
+        logger.error(f"Bandwidth test error: {e}")
+        raise HTTPException(status_code=500, detail=f"Bandwidth test failed: {str(e)}") from e
