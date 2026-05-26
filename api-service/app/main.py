@@ -10,6 +10,7 @@ from uuid import UUID
 import httpx
 import psycopg2
 from psycopg2.pool import SimpleConnectionPool
+import dns.resolver
 import logging
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -97,6 +98,16 @@ class TargetState(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+# DNS Resolution models
+class DNSResolution(BaseModel):
+    query: str  # Original input (IP or domain)
+    is_ip: bool  # Whether input was already an IP
+    resolved_ips: List[str]  # List of resolved IPs
+    primary_ip: str  # First/primary resolved IP
+    resolver_used: str = "nslookup"  # DNS resolver type
+    query_time: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 # New Session models
 class SessionCreate(BaseModel):
     target: str
@@ -153,6 +164,63 @@ async def startup_event():
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "api"}
+
+
+@app.get("/resolve/{target}")
+def resolve_target(target: str) -> DNSResolution:
+    """Resolve a domain name to IP address(es) using DNS lookup
+    
+    Returns:
+    - If input is an IP: returns as-is
+    - If input is a domain: resolves to IP(s) and returns all results
+    """
+    try:
+        logger.info(f"Resolving target: {target}")
+        target = target.strip().lower()
+        
+        # Check if target is already an IP address
+        try:
+            resolved_ip = str(ip_address(target))
+            logger.info(f"Target {target} is already an IP address")
+            return DNSResolution(
+                query=target,
+                is_ip=True,
+                resolved_ips=[resolved_ip],
+                primary_ip=resolved_ip,
+                resolver_used="ip_validation"
+            )
+        except ValueError:
+            # Not an IP, so resolve as domain
+            pass
+        
+        # Resolve domain using dns.resolver
+        try:
+            answers = dns.resolver.resolve(target, 'A')
+            resolved_ips = [str(rdata) for rdata in answers]
+            
+            logger.info(f"Successfully resolved {target} to {resolved_ips}")
+            return DNSResolution(
+                query=target,
+                is_ip=False,
+                resolved_ips=resolved_ips,
+                primary_ip=resolved_ips[0] if resolved_ips else None,
+                resolver_used="nslookup"
+            )
+        except dns.resolver.NXDOMAIN:
+            logger.warning(f"Domain not found: {target}")
+            raise HTTPException(status_code=404, detail=f"Domain '{target}' not found (NXDOMAIN)")
+        except dns.resolver.NoAnswer:
+            logger.warning(f"No A records for domain: {target}")
+            raise HTTPException(status_code=404, detail=f"No A records found for '{target}'")
+        except dns.exception.DNSException as dns_err:
+            logger.error(f"DNS resolution error for {target}: {dns_err}")
+            raise HTTPException(status_code=503, detail=f"DNS resolution failed: {str(dns_err)}")
+            
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"Unexpected error resolving {target}: {exc}")
+        raise HTTPException(status_code=500, detail=f"Resolution error: {str(exc)}")
 
 
 @app.get("/targets")

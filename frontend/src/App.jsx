@@ -29,6 +29,10 @@ function App() {
   const [monitoringInterval, setMonitoringInterval] = useState(null)
   const [isMonitoring, setIsMonitoring] = useState(false)
 
+  // DNS resolution state
+  const [dnsInfo, setDnsInfo] = useState(null)
+  const [dnsLoading, setDnsLoading] = useState(false)
+
   const latest = useMemo(() => (samples.length ? samples[samples.length - 1] : null), [samples])
 
   // Load sessions on mount
@@ -65,11 +69,36 @@ function App() {
       setAllTargets((prev) => [...new Set([...prev, target])])
       storage.setActiveTarget(target)
       storage.setTargets([...new Set([...allTargets, target])])
+      // Resolve DNS for newly added target
+      resolveDNS(target)
     } catch (e) {
       const errorMsg = e?.response?.data?.detail || e?.message || 'Failed to add target'
       setError(errorMsg)
       setStatus('idle')
       console.error('Add target error:', e)
+    }
+  }
+
+  // Resolve DNS
+  const resolveDNS = async (targetToResolve = activeTarget) => {
+    if (!targetToResolve) {
+      setError('Please select a target first')
+      return
+    }
+    
+    try {
+      setDnsLoading(true)
+      setError('')
+      const { data } = await axios.get(`${API_BASE}/resolve/${encodeURIComponent(targetToResolve)}`)
+      setDnsInfo(data)
+      setStatus(`✓ Resolved ${targetToResolve} to ${data.primary_ip}`)
+    } catch (e) {
+      const errorMsg = e?.response?.data?.detail || e?.message || 'Failed to resolve DNS'
+      setError(errorMsg)
+      setDnsInfo(null)
+      console.error('DNS resolution error:', e)
+    } finally {
+      setDnsLoading(false)
     }
   }
 
@@ -188,6 +217,7 @@ function App() {
       setTarget(session.target)
       storage.setActiveTarget(session.target)
       setSamples([]) // Clear samples when switching sessions
+      resolveDNS(session.target) // Resolve DNS for the selected session's target
     }
   }
 
@@ -244,8 +274,47 @@ function App() {
                     <button className="rounded bg-blue-600 hover:bg-blue-700 px-4 py-2 text-sm" onClick={addTarget}>
                       Add Target
                     </button>
+                    <button
+                      className="rounded bg-cyan-600 hover:bg-cyan-700 px-4 py-2 text-sm disabled:opacity-50"
+                      onClick={() => resolveDNS()}
+                      disabled={!activeTarget || dnsLoading}
+                    >
+                      {dnsLoading ? '🔍...' : '🔍 DNS'}
+                    </button>
                   </div>
                 </div>
+
+                {/* DNS Resolution Info */}
+                {dnsInfo && (
+                  <div className="rounded-lg bg-slate-800/50 border border-cyan-700/50 p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-slate-400 font-semibold">DNS Resolution</span>
+                      <span className="text-xs text-cyan-400">{dnsInfo.resolver_used}</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <p className="text-xs text-slate-500">Query</p>
+                        <p className="text-sm font-mono text-slate-200">{dnsInfo.query}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-slate-500">Primary IP</p>
+                        <p className="text-sm font-mono text-cyan-400 font-semibold">{dnsInfo.primary_ip}</p>
+                      </div>
+                    </div>
+                    {dnsInfo.resolved_ips.length > 1 && (
+                      <div>
+                        <p className="text-xs text-slate-500">All IPs ({dnsInfo.resolved_ips.length})</p>
+                        <div className="text-xs font-mono text-slate-300 space-y-1">
+                          {dnsInfo.resolved_ips.map((ip, idx) => (
+                            <div key={idx} className={idx === 0 ? 'text-cyan-400 font-semibold' : ''}>
+                              {idx === 0 ? '→ ' : '  '} {ip}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Session Management */}
                 <div>
