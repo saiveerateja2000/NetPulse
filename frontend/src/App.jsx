@@ -4,6 +4,7 @@ import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianG
 import SessionPanel from './components/SessionPanel'
 import SessionDialog from './components/SessionDialog'
 import ExportDialog from './components/ExportDialog'
+import DiagnosticsPanel from './components/DiagnosticsPanel'
 import { storage, sessionUtils } from './utils/storage'
 
 const API_BASE =
@@ -414,6 +415,11 @@ function App() {
                 </div>
               )}
             </div>
+
+            {/* Diagnostics Panel */}
+            {activeTarget && allTargets.length > 0 && (
+              <DiagnosticsPanel activeTarget={activeTarget} allTargets={allTargets} />
+            )}
           </div>
         </div>
       </div>
